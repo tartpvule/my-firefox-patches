@@ -1,0 +1,46 @@
+--- a/browser/components/nsBrowserGlue.js
++++ b/browser/components/nsBrowserGlue.js
+@@ -113 +112,0 @@ XPCOMUtils.defineLazyModuleGetters(this, {
+-  Normandy: "resource://normandy/Normandy.jsm",
+@@ -706 +704,0 @@ _beforeUIStartup: function BG__beforeUIStartup() {
+-    Normandy.init();
+@@ -1054 +1051,0 @@ _onQuitApplicationGranted() {
+-    Normandy.uninit();
+@@ -2456,13 +2453,2 @@ async _migrateMatchBucketsPrefForUI66() {
+     // Wait for Shield init to complete.
+-    await new Promise(resolve => {
+-      if (this._shieldInitComplete) {
+-        resolve();
+-        return;
+-      }
+-      let topic = "shield-init-complete";
+-      Services.obs.addObserver(function obs() {
+-        Services.obs.removeObserver(obs, topic);
+-        resolve();
+-      }, topic);
+-    });
+ 
+@@ -2475,17 +2461,4 @@ async _migrateMatchBucketsPrefForUI66() {
+     // Get the study (aka experiment).  It may not be installed.
+-    let experiment = null;
+-    let experimentName = "pref-flip-search-composition-57-release-1413565";
+-    let {PreferenceExperiments} =
+-      ChromeUtils.import("resource://normandy/lib/PreferenceExperiments.jsm", {});
+-    try {
+-      experiment = await PreferenceExperiments.get(experimentName);
+-    } catch (e) {}
+ 
+     // Uninstall the study, resetting the pref to its state before the study.
+-    if (experiment && !experiment.expired) {
+-      await PreferenceExperiments.stop(experimentName, {
+-        resetValue: true,
+-        reason: "external:search-ui-migration",
+-      });
+-    }
+ 
+
+--- a/toolkit/components/moz.build
++++ b/toolkit/components/moz.build
+@@ -115,2 +114,0 @@
+-if CONFIG['MOZ_BUILD_APP'] == 'browser':
+-    DIRS += ['normandy']

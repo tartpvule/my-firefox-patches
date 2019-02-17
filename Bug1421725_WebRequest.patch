@@ -1,0 +1,243 @@
+--- a/toolkit/modules/addons/WebRequest.jsm
++++ b/toolkit/modules/addons/WebRequest.jsm
+@@ -143,10 +143,15 @@
+       }
+ 
+       headersAlreadySet.add(lowerCaseName);
+     }
+   }
++
++  rereadHeaders() {
++    this.array = this.readHeaders();
++    this.map = null;
++  }
+ }
+ 
+ const checkRestrictedHeaderValue = (value, opts = {}) => {
+   let uri = Services.io.newURI(`https://${value}/`);
+   let {extension} = opts;
+@@ -737,79 +742,125 @@
+   },
+ 
+   STATUS_TYPES: new Set(["headersReceived", "authRequired", "onRedirect", "onStart", "onStop"]),
+   FILTER_TYPES: new Set(["opening", "modify", "afterModify", "headersReceived", "authRequired", "onRedirect"]),
+ 
+-  runChannelListener(channel, kind, extraData = null) {
+-    let handlerResults = [];
+-    let requestHeaders;
+-    let responseHeaders;
++  async runChannelListener(channel, kind, extraData = null) {
++    let context = {
++      commonData: null,
++      requestHeaders: null,
++      responseHeaders: null,
++      requestBody: null,
++      shouldResume: null
++    };
+ 
+     try {
+       if (kind !== "onError" && channel.errorString) {
+         return;
+       }
+ 
+       let registerFilter = this.FILTER_TYPES.has(kind);
+-      let commonData = null;
+-      let requestBody;
++      let _sequence = [];
++
+       this.listeners[kind].forEach((opts, callback) => {
+         if (!channel.matches(opts.filter, opts.extension, extraData)) {
+           return;
+         }
+ 
+-        if (!commonData) {
+-          commonData = this.getRequestData(channel, extraData);
+-          if (this.STATUS_TYPES.has(kind)) {
+-            commonData.statusCode = channel.statusCode;
+-            commonData.statusLine = channel.statusLine;
+-          }
++        if (opts.blocking) {
++          _sequence.push([opts, callback]);
++          return;
+         }
+-        let data = Object.create(commonData);
+ 
+-        if (registerFilter && opts.blocking && opts.extension) {
+-          channel.registerTraceableChannel(opts.extension, opts.tabParent);
+-        }
++        this.callOneListener(channel, kind, extraData, registerFilter, context, [opts, callback]);
++      });
+ 
+-        if (opts.requestHeaders) {
+-          requestHeaders = requestHeaders || new RequestHeaderChanger(channel);
+-          data.requestHeaders = requestHeaders.toArray();
++      let shouldApply = true;
++      if (_sequence.length) {
++        for (let listener of _sequence) {
++          let handlerResult = this.callOneListener(channel, kind, extraData, registerFilter, context, listener);
++          if (handlerResult && shouldApply) {
++            let canceledOrRedirected = await this.applyChanges1(kind, channel, [handlerResult], context);
++            if (canceledOrRedirected) {
++              shouldApply = false;
++            }
++          }
+         }
++      }
++    } catch (e) {
++      Cu.reportError(e);
++    }
+ 
+-        if (opts.responseHeaders) {
+-          try {
+-            responseHeaders = responseHeaders || new ResponseHeaderChanger(channel);
+-            data.responseHeaders = responseHeaders.toArray();
+-          } catch (e) { /* headers may not be available on some redirects */ }
+-        }
++    return await this.applyChanges2(kind, channel, context);
++  },
++  callOneListener(channel, kind, extraData, registerFilter, context, listener) {
++    let commonData = context.commonData;
++    if (!commonData) {
++      commonData = this.getRequestData(channel, extraData);
++      if (this.STATUS_TYPES.has(kind)) {
++        commonData.statusCode = channel.statusCode;
++        commonData.statusLine = channel.statusLine;
++      }
++      context.commonData = commonData;
++    }
++    let data = Object.create(commonData);
+ 
+-        if (opts.requestBody && channel.canModify) {
+-          requestBody = requestBody || WebRequestUpload.createRequestBody(channel.channel);
+-          data.requestBody = requestBody;
+-        }
++    let [opts, callback] = listener;
++    if (registerFilter && opts.blocking && opts.extension) {
++      channel.registerTraceableChannel(opts.extension, opts.tabParent);
++    }
+ 
+-        try {
+-          let result = callback(data);
++    if (opts.requestHeaders) {
++      let requestHeaders = context.requestHeaders;
++      if (!requestHeaders) {
++        requestHeaders = new RequestHeaderChanger(channel);
++        context.requestHeaders = requestHeaders;
++      }
++      data.requestHeaders = requestHeaders.toArray();
++    }
+ 
+-          // isProxy is set during onAuth if the auth request is for a proxy.
+-          // We allow handling proxy auth regardless of canModify.
+-          if ((channel.canModify || data.isProxy) && typeof result === "object" && opts.blocking) {
+-            handlerResults.push({opts, result});
+-          }
+-        } catch (e) {
+-          Cu.reportError(e);
+-        }
+-      });
++    if (opts.responseHeaders) {
++      try {
++        let responseHeaders = context.responseHeaders;
++        if (!responseHeaders) {
++          responseHeaders = new ResponseHeaderChanger(channel);
++          context.responseHeaders = responseHeaders;
++        }
++        data.responseHeaders = responseHeaders.toArray();
++      } catch (e) { /* headers may not be available on some redirects */ }
++    }
++
++    if (opts.requestBody && channel.canModify) {
++      let requestBody = context.requestBody;
++      if (!requestBody) {
++        requestBody = WebRequestUpload.createRequestBody(channel.channel);
++        context.requestBody = requestBody;
++      }
++      data.requestBody = requestBody;
++    }
++
++    try {
++      let result = callback(data);
++
++      // isProxy is set during onAuth if the auth request is for a proxy.
++      // We allow handling proxy auth regardless of canModify.
++      if ((channel.canModify || data.isProxy) && typeof result === "object" && opts.blocking) {
++        return {opts, result};
++      }
+     } catch (e) {
+       Cu.reportError(e);
+     }
+-
+-    return this.applyChanges(kind, channel, handlerResults, requestHeaders, responseHeaders);
+   },
+ 
+-  async applyChanges(kind, channel, handlerResults, requestHeaders, responseHeaders) {
+-    let shouldResume = !channel.suspended;
++  async applyChanges1(kind, channel, handlerResults, context) {
++    let {requestHeaders, responseHeaders} = context;
++
++    let shouldResume;
++    if (context.shouldResume === null) {
++      shouldResume = !channel.suspended;
++      context.shouldResume = shouldResume;
++    }
+ 
+     try {
+       for (let {opts, result} of handlerResults) {
+         if (isThenable(result)) {
+           channel.suspended = true;
+@@ -843,11 +894,11 @@
+         }
+ 
+         if (result.cancel) {
+           channel.suspended = false;
+           channel.cancel(Cr.NS_ERROR_ABORT);
+-          return;
++          return true;
+         }
+ 
+         if (result.redirectUrl) {
+           try {
+             channel.suspended = false;
+@@ -859,11 +910,11 @@
+             // channel.redirectTo is called because the channel's
+             // RedirectTo() implementation explicitly drops the flag
+             // to avoid additional redirects not caused by the
+             // Web Extension.
+             channel.loadInfo.allowInsecureRedirectToDataURI = true;
+-            return;
++            return true;
+           } catch (e) {
+             Cu.reportError(e);
+           }
+         }
+ 
+@@ -875,17 +926,28 @@
+           }
+         }
+ 
+         if (opts.requestHeaders && result.requestHeaders && requestHeaders) {
+           requestHeaders.applyChanges(result.requestHeaders, opts);
++          requestHeaders.rereadHeaders();
+         }
+ 
+         if (opts.responseHeaders && result.responseHeaders && responseHeaders) {
+           responseHeaders.applyChanges(result.responseHeaders, opts);
++          responseHeaders.rereadHeaders();
+         }
+       }
++    } catch (e) {
++      Cu.reportError(e);
++    }
+ 
++    return false;
++  },
++  async applyChanges2(kind, channel, context) {
++    let shouldResume = context.shouldResume;
++
++    try {
+       // If a listener did not cancel the request or provide credentials, we
+       // forward the auth request to the base handler.
+       if (kind === "authRequired" && channel.authPromptForward) {
+         channel.authPromptForward();
+       }
