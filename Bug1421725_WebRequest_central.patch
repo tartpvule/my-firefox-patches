@@ -1,0 +1,459 @@
+--- a/toolkit/components/extensions/webrequest/WebRequest.jsm
++++ b/toolkit/components/extensions/webrequest/WebRequest.jsm
+@@ -143,6 +143,11 @@
+       headersAlreadySet.add(lowerCaseName);
+     }
+   }
++
++  rereadHeaders() {
++    this.array = this.readHeaders();
++    this.map = null;
++  }
+ }
+ 
+ const checkRestrictedHeaderValue = (value, opts = {}) => {
+@@ -481,6 +486,241 @@
+    "nsIAuthPrompt2"]);
+ 
+ 
++class ListenerRunner {
++  constructor(channel, kind) {
++    this.channel = channel;
++    this.kind = kind;
++
++    this.registerFilter = HttpObserverManager.FILTER_TYPES.has(kind);
++    this.shouldResume = null;
++  }
++
++  async callListeners() {
++    let blockingListeners = [];
++
++    HttpObserverManager.listeners[this.kind].forEach((opts, callback) => {
++      if (!this.channel.matches(opts.filter, opts.extension, this.extraData)) {
++        return;
++      }
++
++      if (!opts.blocking) {
++        this.callOneListener([opts, callback]);
++        return;
++      }
++
++      blockingListeners.push([opts, callback]);
++    });
++
++    let shouldApply = true;
++    for (let listener of blockingListeners) {
++      let handlerResult = this.callOneListener(listener);
++      if (!handlerResult || !shouldApply) {
++        continue;
++      }
++
++      let [opts, result] = handlerResult;
++      if (isThenable(result)) {
++        result = await this.awaitResult(result);
++        if (!result) {
++          continue;
++        }
++      }
++
++      if (this.applyChanges1(opts, result)) {
++        shouldApply = false;
++      }
++    }
++
++    return await this.applyChanges2();
++  }
++
++  createData(opts) {
++    if (!this.commonData) {
++      let commonData = HttpObserverManager.getRequestData(this.channel, this.extraData);
++      if (HttpObserverManager.STATUS_TYPES.has(this.kind)) {
++        commonData.statusCode = this.channel.statusCode;
++        commonData.statusLine = this.channel.statusLine;
++      }
++      this.commonData = commonData;
++    }
++
++    let data = Object.create(this.commonData);
++
++    if (this.registerFilter && opts.blocking && opts.extension) {
++      data.registerTraceableChannel = (extension, remoteTab) => {
++        // `channel` is a ChannelWrapper, which contains the actual
++        // underlying nsIChannel in `channel.channel`.  For startup events
++        // that are held until the extension background page is started,
++        // it is possible that the underlying channel can be closed and
++        // cleaned up between the time the event occurred and the time
++        // we reach this code.
++        if (this.channel.channel) {
++          this.channel.registerTraceableChannel(extension, remoteTab);
++        }
++      };
++    }
++
++    if (opts.requestHeaders) {
++      if (!this.requestHeaders) {
++        this.requestHeaders = new RequestHeaderChanger(this.channel);
++      }
++      data.requestHeaders = this.requestHeaders.toArray();
++    }
++
++    if (opts.responseHeaders) {
++      try {
++        if (!this.responseHeaders) {
++          this.responseHeaders = new ResponseHeaderChanger(this.channel);
++        }
++        data.responseHeaders = this.responseHeaders.toArray();
++      } catch (e) { /* headers may not be available on some redirects */ }
++    }
++
++    if (opts.requestBody && this.channel.canModify) {
++      if (!this.requestBody) {
++        this.requestBody = WebRequestUpload.createRequestBody(this.channel.channel);
++      }
++      data.requestBody = this.requestBody;
++    }
++
++    return data;
++  }
++
++  callOneListener([opts, callback]) {
++    let data = this.createData(opts);
++
++    try {
++      let result = callback(data);
++
++      // isProxy is set during onAuth if the auth request is for a proxy.
++      // We allow handling proxy auth regardless of canModify.
++      if ((this.channel.canModify || data.isProxy) && typeof result === "object" && opts.blocking) {
++        return [opts, result];
++      }
++    } catch (e) {
++      Cu.reportError(e);
++    }
++  }
++
++  async awaitResult(result) {
++    if (this.shouldResume === null) {
++      this.shouldResume = !this.channel.suspended;
++    }
++
++    this.channel.suspended = true;
++    try {
++      result = await result;
++    } catch (e) {
++      let error;
++
++      if (e instanceof Error) {
++        error = e;
++      } else if (typeof e === "object" && e.message) {
++        error = new Error(e.message, e.fileName, e.lineNumber);
++      }
++
++      Cu.reportError(error);
++      return null;
++    }
++    if (!result || typeof result !== "object") {
++      return null;
++    }
++    return result;
++  }
++
++  applyChanges1(opts, result) {
++    try {
++      if (this.kind === "authRequired" && result.authCredentials && this.channel.authPromptCallback) {
++        this.channel.authPromptCallback(result.authCredentials);
++      }
++
++      // We allow proxy auth to cancel or handle authCredentials regardless of
++      // canModify, but ensure we do nothing else.
++      if (!this.channel.canModify) {
++        return false;
++      }
++
++      if (result.cancel) {
++        this.channel.suspended = false;
++        this.channel.cancel(Cr.NS_ERROR_ABORT);
++        return true;
++      }
++
++      if (result.redirectUrl) {
++        try {
++          this.channel.suspended = false;
++          this.channel.redirectTo(Services.io.newURI(result.redirectUrl));
++          // Web Extensions using the WebRequest API are allowed
++          // to redirect a channel to a data: URI, hence we mark
++          // the channel to let the redirect blocker know.
++          this.channel.loadInfo.allowInsecureRedirectToDataURI = true;
++
++          // Web Extentions using the WebRequest API are also allowed
++          // to redirect a channel before any data has been send.
++          // This means we dont have  "Access-Control-Allow-Origin"
++          // information at that point so CORS checks would fail.
++          // Since we trust the WebExtention, we mark the Channel
++          // to skip the CORS check.
++          this.channel.loadInfo.bypassCORSChecks = true;
++
++          // Please note that this marking needs to happen after the
++          // channel.redirectTo is called because the channel's
++          // RedirectTo() implementation explicitly drops the flags
++          // to avoid redirects not caused by the
++          // Web Extension.
++          return true;
++        } catch (e) {
++          Cu.reportError(e);
++        }
++      }
++
++      if (result.upgradeToSecure && this.kind === "opening") {
++        try {
++          this.channel.upgradeToSecure();
++        } catch (e) {
++          Cu.reportError(e);
++        }
++      }
++
++      if (opts.requestHeaders && result.requestHeaders && this.requestHeaders) {
++        this.requestHeaders.applyChanges(result.requestHeaders, opts);
++        this.requestHeaders.rereadHeaders();
++      }
++
++      if (opts.responseHeaders && result.responseHeaders && this.responseHeaders) {
++        this.responseHeaders.applyChanges(result.responseHeaders, opts);
++        this.responseHeaders.rereadHeaders();
++      }
++    } catch (e) {
++      Cu.reportError(e);
++    }
++
++    return false;
++  }
++  async applyChanges2() {
++    try {
++      // If a listener did not cancel the request or provide credentials, we
++      // forward the auth request to the base handler.
++      if (this.kind === "authRequired" && this.channel.authPromptForward) {
++        this.channel.authPromptForward();
++      }
++
++      if (this.kind === "modify" && HttpObserverManager.listeners.afterModify.size) {
++        await HttpObserverManager.runChannelListener(this.channel, "afterModify");
++      } else if (this.kind !== "onError") {
++        this.channel.errorCheck();
++      }
++    } catch (e) {
++      Cu.reportError(e);
++    }
++
++    // Only resume the channel if it was suspended by this call.
++    if (this.shouldResume) {
++      this.channel.suspended = false;
++    }
++  }
++}
++
+ HttpObserverManager = {
+   openingInitialized: false,
+   modifyInitialized: false,
+@@ -713,188 +953,30 @@
+   FILTER_TYPES: new Set(["opening", "modify", "afterModify", "headersReceived", "authRequired", "onRedirect"]),
+ 
+   runChannelListener(channel, kind, extraData = null) {
+-    let handlerResults = [];
+-    let requestHeaders;
+-    let responseHeaders;
+-
+-    try {
+-      if (kind !== "onError" && channel.errorString) {
+-        return;
+-      }
+-
+-      let registerFilter = this.FILTER_TYPES.has(kind);
+-      let commonData = null;
+-      let requestBody;
+-      this.listeners[kind].forEach((opts, callback) => {
+-        if (!channel.matches(opts.filter, opts.extension, extraData)) {
+-          return;
+-        }
+-
+-        if (!commonData) {
+-          commonData = this.getRequestData(channel, extraData);
+-          if (this.STATUS_TYPES.has(kind)) {
+-            commonData.statusCode = channel.statusCode;
+-            commonData.statusLine = channel.statusLine;
+-          }
+-        }
+-        let data = Object.create(commonData);
+-
+-        if (registerFilter && opts.blocking && opts.extension) {
+-          data.registerTraceableChannel = (extension, remoteTab) => {
+-            // `channel` is a ChannelWrapper, which contains the actual
+-            // underlying nsIChannel in `channel.channel`.  For startup events
+-            // that are held until the extension background page is started,
+-            // it is possible that the underlying channel can be closed and
+-            // cleaned up between the time the event occurred and the time
+-            // we reach this code.
+-            if (channel.channel) {
+-              channel.registerTraceableChannel(extension, remoteTab);
+-            }
+-          };
+-        }
+-
+-        if (opts.requestHeaders) {
+-          requestHeaders = requestHeaders || new RequestHeaderChanger(channel);
+-          data.requestHeaders = requestHeaders.toArray();
+-        }
+-
+-        if (opts.responseHeaders) {
+-          try {
+-            responseHeaders = responseHeaders || new ResponseHeaderChanger(channel);
+-            data.responseHeaders = responseHeaders.toArray();
+-          } catch (e) { /* headers may not be available on some redirects */ }
+-        }
+-
+-        if (opts.requestBody && channel.canModify) {
+-          requestBody = requestBody || WebRequestUpload.createRequestBody(channel.channel);
+-          data.requestBody = requestBody;
+-        }
+-
+-        try {
+-          let result = callback(data);
+-
+-          // isProxy is set during onAuth if the auth request is for a proxy.
+-          // We allow handling proxy auth regardless of canModify.
+-          if ((channel.canModify || data.isProxy) && typeof result === "object" && opts.blocking) {
+-            handlerResults.push({opts, result});
+-          }
+-        } catch (e) {
+-          Cu.reportError(e);
+-        }
+-      });
+-    } catch (e) {
+-      Cu.reportError(e);
+-    }
+-
+-    return this.applyChanges(kind, channel, handlerResults, requestHeaders, responseHeaders);
++    let runner = new ListenerRunner(channel, kind);
++    runner.extraData = extraData;
++    return runner.callListeners();
+   },
+ 
+   async applyChanges(kind, channel, handlerResults, requestHeaders, responseHeaders) {
+-    let shouldResume = !channel.suspended;
+-
+-    try {
+-      for (let {opts, result} of handlerResults) {
+-        if (isThenable(result)) {
+-          channel.suspended = true;
+-          try {
+-            result = await result;
+-          } catch (e) {
+-            let error;
+-
+-            if (e instanceof Error) {
+-              error = e;
+-            } else if (typeof e === "object" && e.message) {
+-              error = new Error(e.message, e.fileName, e.lineNumber);
+-            }
+-
+-            Cu.reportError(error);
+-            continue;
+-          }
+-          if (!result || typeof result !== "object") {
+-            continue;
+-          }
+-        }
+-
+-        if (kind === "authRequired" && result.authCredentials && channel.authPromptCallback) {
+-          channel.authPromptCallback(result.authCredentials);
+-        }
+-
+-        // We allow proxy auth to cancel or handle authCredentials regardless of
+-        // canModify, but ensure we do nothing else.
+-        if (!channel.canModify) {
++    let runner = new ListenerRunner(channel, kind);
++    runner.requestHeaders = requestHeaders;
++    runner.responseHeaders = responseHeaders;
++
++    for (let {opts, result} of handlerResults) {
++      if (isThenable(result)) {
++        result = await runner.awaitResult(result);
++        if (!result) {
+           continue;
+         }
+-
+-        if (result.cancel) {
+-          channel.suspended = false;
+-          channel.cancel(Cr.NS_ERROR_ABORT);
+-          return;
+-        }
+-
+-        if (result.redirectUrl) {
+-          try {
+-            channel.suspended = false;
+-            channel.redirectTo(Services.io.newURI(result.redirectUrl));
+-            // Web Extensions using the WebRequest API are allowed
+-            // to redirect a channel to a data: URI, hence we mark
+-            // the channel to let the redirect blocker know.
+-            channel.loadInfo.allowInsecureRedirectToDataURI = true;
+-
+-            // Web Extentions using the WebRequest API are also allowed
+-            // to redirect a channel before any data has been send.
+-            // This means we dont have  "Access-Control-Allow-Origin"
+-            // information at that point so CORS checks would fail.
+-            // Since we trust the WebExtention, we mark the Channel
+-            // to skip the CORS check.
+-            channel.loadInfo.bypassCORSChecks = true;
+-
+-            // Please note that this marking needs to happen after the
+-            // channel.redirectTo is called because the channel's
+-            // RedirectTo() implementation explicitly drops the flags
+-            // to avoid redirects not caused by the
+-            // Web Extension.
+-            return;
+-          } catch (e) {
+-            Cu.reportError(e);
+-          }
+-        }
+-
+-        if (result.upgradeToSecure && kind === "opening") {
+-          try {
+-            channel.upgradeToSecure();
+-          } catch (e) {
+-            Cu.reportError(e);
+-          }
+-        }
+-
+-        if (opts.requestHeaders && result.requestHeaders && requestHeaders) {
+-          requestHeaders.applyChanges(result.requestHeaders, opts);
+-        }
+-
+-        if (opts.responseHeaders && result.responseHeaders && responseHeaders) {
+-          responseHeaders.applyChanges(result.responseHeaders, opts);
+-        }
+       }
+ 
+-      // If a listener did not cancel the request or provide credentials, we
+-      // forward the auth request to the base handler.
+-      if (kind === "authRequired" && channel.authPromptForward) {
+-        channel.authPromptForward();
+-      }
+-
+-      if (kind === "modify" && this.listeners.afterModify.size) {
+-        await this.runChannelListener(channel, "afterModify");
+-      } else if (kind !== "onError") {
+-        channel.errorCheck();
++      if (runner.applyChanges1(opts, result)) {
++        break;
+       }
+-    } catch (e) {
+-      Cu.reportError(e);
+     }
+ 
+-    // Only resume the channel if it was suspended by this call.
+-    if (shouldResume) {
+-      channel.suspended = false;
+-    }
++    return await runner.applyChanges2();
+   },
+ 
+   shouldHookListener(listener, channel, extraData) {

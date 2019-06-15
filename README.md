@@ -13,6 +13,16 @@ Modifies WebRequest.jsm to run and apply changes from blocking listeners sequent
 
 This is in accordance with what the MDN says: "... the second listener will see modifications made by the first listener ..."
 
+## Bug1421725_WebRequest_central.patch
+
+Developed against mozilla-central.
+An experimental patch to "fix" Bug 1421725, to be applied to source files.
+
+Refactor runChannelListener and applyChanges to a separate class to.
+Run and apply changes from blocking listeners sequentially.
+
+This is in accordance with what the MDN says: "... the second listener will see modifications made by the first listener ..."
+
 ## monkey_Bug1421725_WebRequest.cfg
 
 An unholy autoconfig script to monkey patch the changes as seen in Bug1421725_WebRequest.patch.
