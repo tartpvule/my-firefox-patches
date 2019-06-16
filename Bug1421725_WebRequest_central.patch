@@ -12,7 +12,7 @@
  }
  
  const checkRestrictedHeaderValue = (value, opts = {}) => {
-@@ -481,6 +486,241 @@
+@@ -481,6 +486,232 @@
     "nsIAuthPrompt2"]);
  
  
@@ -26,29 +26,18 @@
 +  }
 +
 +  async callListeners() {
-+    let blockingListeners = [];
-+
-+    HttpObserverManager.listeners[this.kind].forEach((opts, callback) => {
-+      if (!this.channel.matches(opts.filter, opts.extension, this.extraData)) {
-+        return;
-+      }
-+
-+      if (!opts.blocking) {
-+        this.callOneListener([opts, callback]);
-+        return;
-+      }
-+
-+      blockingListeners.push([opts, callback]);
-+    });
-+
 +    let shouldApply = true;
-+    for (let listener of blockingListeners) {
-+      let handlerResult = this.callOneListener(listener);
-+      if (!handlerResult || !shouldApply) {
++
++    for (let [callback, opts] of HttpObserverManager.listeners[this.kind]) {
++      if (!this.channel.matches(opts.filter, opts.extension, this.extraData)) {
 +        continue;
 +      }
 +
-+      let [opts, result] = handlerResult;
++      let result = this.callOneListener(opts, callback);
++      if (!opts.blocking || !result || !shouldApply) {
++        continue;
++      }
++
 +      if (isThenable(result)) {
 +        result = await this.awaitResult(result);
 +        if (!result) {
@@ -116,7 +105,7 @@
 +    return data;
 +  }
 +
-+  callOneListener([opts, callback]) {
++  callOneListener(opts, callback) {
 +    let data = this.createData(opts);
 +
 +    try {
@@ -125,11 +114,13 @@
 +      // isProxy is set during onAuth if the auth request is for a proxy.
 +      // We allow handling proxy auth regardless of canModify.
 +      if ((this.channel.canModify || data.isProxy) && typeof result === "object" && opts.blocking) {
-+        return [opts, result];
++        return result;
 +      }
 +    } catch (e) {
 +      Cu.reportError(e);
 +    }
++
++    return null;
 +  }
 +
 +  async awaitResult(result) {
@@ -254,7 +245,7 @@
  HttpObserverManager = {
    openingInitialized: false,
    modifyInitialized: false,
-@@ -713,188 +953,30 @@
+@@ -713,188 +944,30 @@
    FILTER_TYPES: new Set(["opening", "modify", "afterModify", "headersReceived", "authRequired", "onRedirect"]),
  
    runChannelListener(channel, kind, extraData = null) {
