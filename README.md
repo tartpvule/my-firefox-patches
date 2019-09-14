@@ -23,8 +23,8 @@ A source patch for ESR68.1 to make WebRequest.jsm run and apply changes from blo
 This patch also refactors the code into a new class: `ListenerRunner`.
 Non-blocking listeners are run not affected.
 
-This patch is intended to be applied after applying (this changeset)[https://hg.mozilla.org/mozilla-central/rev/308ef98e6e4b],
-for (Bug 1450965)[https://bugzilla.mozilla.org/show_bug.cgi?id=1450965].
+This patch is intended to be applied after applying [this changeset](https://hg.mozilla.org/mozilla-central/rev/308ef98e6e4b),
+for [Bug 1450965](https://bugzilla.mozilla.org/show_bug.cgi?id=1450965).
 
 ## monkey_Bug1421725_WebRequest_esr68.cfg
 
