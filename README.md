@@ -3,6 +3,8 @@ In no particular order.
 
 For autoconfig scripts, need `general.config.sandbox_enabled` = `false`.
 
+Alternative way to patch: [chrome.manifest override](https://github.com/tartpvule/my-firefox-patches/issues/2#issue-481998289)
+
 ## remove-normandy.patch
 
 A patch to remove Normandy component, to be applied to source files.
