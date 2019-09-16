@@ -5,10 +5,9 @@ For autoconfig scripts, need `general.config.sandbox_enabled` = `false`.
 
 Alternative way to patch: [chrome.manifest override](https://github.com/tartpvule/my-firefox-patches/issues/2#issue-481998289)
 
-## remove-normandy.patch
+## remove_normandy_esr68.patch
 
-A patch to remove Normandy component, to be applied to source files.
-Tested on ESR60.
+A source patch for ESR68 to remove Normandy component, to be applied to source files.
 
 ## Bug1421725_WebRequest_esr60.patch
 

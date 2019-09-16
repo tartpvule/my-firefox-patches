@@ -1,0 +1,94 @@
+--- a/browser/components/BrowserGlue.jsm
++++ b/browser/components/BrowserGlue.jsm
+@@ -284,9 +283,0 @@
+-  ShieldFrame: {
+-    child: {
+-      module: "resource://normandy-content/ShieldFrameChild.jsm",
+-      events: {
+-        ShieldPageEvent: { wantUntrusted: true },
+-      },
+-      matches: ["about:studies"],
+-    },
+-  },
+@@ -453 +443,0 @@
+-  Normandy: "resource://normandy/Normandy.jsm",
+@@ -1190 +1179,0 @@
+-    Normandy.init();
+@@ -1814 +1802,0 @@
+-    Normandy.uninit();
+@@ -3260,17 +3247,0 @@
+-    // Get the study (aka experiment).  It may not be installed.
+-    let experiment = null;
+-    let experimentName = "pref-flip-search-composition-57-release-1413565";
+-    let { PreferenceExperiments } = ChromeUtils.import(
+-      "resource://normandy/lib/PreferenceExperiments.jsm"
+-    );
+-    try {
+-      experiment = await PreferenceExperiments.get(experimentName);
+-    } catch (e) {}
+-
+-    // Uninstall the study, resetting the pref to its state before the study.
+-    if (experiment && !experiment.expired) {
+-      await PreferenceExperiments.stop(experimentName, {
+-        resetValue: true,
+-        reason: "external:search-ui-migration",
+-      });
+-    }
+
+--- a/toolkit/components/moz.build
++++ b/toolkit/components/moz.build
+@@ -118,2 +117,0 @@
+-if CONFIG['MOZ_BUILD_APP'] == 'browser':
+-    DIRS += ['normandy']
+
+--- a/browser/components/newtab/lib/ASRouter.jsm
++++ b/browser/components/newtab/lib/ASRouter.jsm
+@@ -38,2 +37,0 @@
+-ChromeUtils.defineModuleGetter(this, "ClientEnvironment",
+-  "resource://normandy/lib/ClientEnvironment.jsm");
+@@ -722,44 +720,3 @@
+   async _generateTrailheadBranches() {
+-    let experiment = "";
+-    let interrupt;
+-    let triplet;
+-
+-    // Use control Trailhead Branch (for cards) if we are showing RTAMO.
+-    if (await this._hasAddonAttributionData()) {
+-      return {experiment, interrupt: "control", triplet: ""};
+-    }
+-
+-    // If a value is set in TRAILHEAD_OVERRIDE_PREF, it will be returned and no experiment will be set.
+-    const overrideValue = Services.prefs.getStringPref(TRAILHEAD_CONFIG.OVERRIDE_PREF, "");
+-    if (overrideValue) {
+-      [interrupt, triplet] = overrideValue.split("-");
+-      return {experiment, interrupt, triplet: triplet || ""};
+-    }
+-
+-    const locale = Services.locale.appLocaleAsLangTag;
+-
+-    if (TRAILHEAD_CONFIG.LOCALES.includes(locale)) {
+-      const {userId} = ClientEnvironment;
+-      experiment = await chooseBranch(`${userId}-trailhead-experiments`, TRAILHEAD_CONFIG.EXPERIMENT_RATIOS);
+-
+-      // For the interrupts experiment,
+-      // we randomly assign an interrupt and always use the "supercharge" triplet.
+-      if (experiment === "interrupts") {
+-        interrupt =  await chooseBranch(`${userId}-interrupts-branch`, TRAILHEAD_CONFIG.BRANCHES.interrupts);
+-        if (["join", "sync", "cards"].includes(interrupt)) {
+-          triplet = "supercharge";
+-        }
+-
+-      // For the triplets experiment or non-experiment experience,
+-      // we randomly assign a triplet and always use the "join" interrupt.
+-      } else {
+-        interrupt = "join";
+-        triplet = await chooseBranch(`${userId}-triplets-branch`, TRAILHEAD_CONFIG.BRANCHES.triplets);
+-      }
+-    } else {
+-      // If the user is not in a trailhead-compabtible locale, return the control experience and no experiment.
+-      interrupt = "control";
+-    }
+-
+-    return {experiment, interrupt, triplet};
++    return {experiment: "", interrupt: "control", triplet: ""};
+   }
