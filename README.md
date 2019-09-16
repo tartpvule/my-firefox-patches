@@ -7,12 +7,12 @@ Alternative way to patch: [chrome.manifest override](https://github.com/tartpvul
 
 ## remove_normandy_esr68.patch
 
-A source patch for ESR68 to remove Normandy component, to be applied to source files.
+A source patch for ESR68 to remove Normandy component.
 
 ## Bug1421725_WebRequest_esr60.patch
 
 A source patch for ESR60 to make WebRequest.jsm run and apply changes from blocking listeners sequentially.
-Non-blocking listeners are run not affected.
+Non-blocking listeners are not affected.
 
 ## monkey_Bug1421725_WebRequest_esr60.cfg
 
@@ -22,7 +22,7 @@ An autoconfig script for ESR60 to monkey-patch the changes in Bug1421725_WebRequ
 
 A source patch for ESR68.1 to make WebRequest.jsm run and apply changes from blocking listeners sequentially.
 This patch also refactors the code into a new class: `ListenerRunner`.
-Non-blocking listeners are run not affected.
+Non-blocking listeners are not affected.
 
 This patch is intended to be applied after applying [this changeset](https://hg.mozilla.org/mozilla-central/rev/308ef98e6e4b),
 for [Bug 1450965](https://bugzilla.mozilla.org/show_bug.cgi?id=1450965).
