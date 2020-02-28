@@ -30,3 +30,12 @@ for [Bug 1450965](https://bugzilla.mozilla.org/show_bug.cgi?id=1450965).
 ## monkey_Bug1421725_WebRequest_esr68.cfg
 
 An autoconfig script for ESR68 to monkey-patch Bug 1421725.
+
+## ubo1250_issue909.patch
+
+Not extensively tested
+
+A patch for gorhill's uBlock Origin 1.25.0 to fix Issue 909 "CNAME first-party resources detected as third-party"
+This patch makes uBO not resolve CNAME if a request is of exactly the same host as the origin.
+
+In version 1.25.0, first-party same-host requests are filtered twice; first as a normal first-party request, then again as a third-party request under CNAME-uncloaked host. This makes it impossible to write rules that affect the CNAME-uncloaked host while leaving first-party requests alone.

@@ -1,0 +1,17 @@
+--- a/js/vapi-webrequest.js
++++ b/js/vapi-webrequest.js
+@@ -223,10 +223,14 @@
+                 this.cnameIgnoreRootDocument
+             ) {
+                 return;
+             }
+             const hn = vAPI.hostnameFromNetworkURL(details.url);
++            // !! MODIFICATION: Ignore same-host requests
++            if ( vAPI.hostnameFromNetworkURL(details.originUrl) === hn ) {
++                return r;
++            }
+             const cname = this.cnames.get(hn);
+             if ( cname === '' ) { return; }
+             if ( cname !== undefined ) {
+                 return this.processCanonicalName(hn, cname, details);
+             }
