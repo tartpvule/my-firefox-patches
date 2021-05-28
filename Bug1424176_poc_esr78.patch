@@ -1,0 +1,76 @@
+Proof-of-Concept
+See https://github.com/tartpvule/my-firefox-patches
+
+--- a/toolkit/components/extensions/ExtensionContent.jsm
++++ b/toolkit/components/extensions/ExtensionContent.jsm
+@@ -879,6 +879,30 @@
+     defineLazyGetter(this, "userScriptsEvents", () => {
+       return new ExtensionCommon.EventEmitter();
+     });
++
++    if (isContentScriptProcess) {
++      // [OUT-OF-TREE] tartpvule Bug1424176
++      Cu.exportFunction(() => {
++        return ExtensionProcessScript.OOT_Bug1424176.get(this.extension);
++      }, this.sandbox, {
++        defineAs: "OOT_Bug1424176_get"
++      });
++      Cu.exportFunction((code) => {
++        ExtensionProcessScript.OOT_Bug1424176.set(this.extension, code);
++      }, this.sandbox, {
++        defineAs: "OOT_Bug1424176_set"
++      });
++      Cu.exportFunction(() => {
++        return ExtensionProcessScript.OOT_Bug1424176.has(this.extension);
++      }, this.sandbox, {
++        defineAs: "OOT_Bug1424176_has"
++      });
++      Cu.exportFunction(() => {
++        return ExtensionProcessScript.OOT_Bug1424176.delete(this.extension);
++      }, this.sandbox, {
++        defineAs: "OOT_Bug1424176_delete"
++      });
++    }
+   }
+ 
+   injectAPI() {
+@@ -1034,6 +1058,9 @@
+   },
+ 
+   shutdownExtension(extension) {
++    // [OUT-OF-TREE] tartpvule Bug1424176
++    ExtensionProcessScript.OOT_Bug1424176.delete(extension);
++
+     for (let extensions of this.contexts.values()) {
+       let context = extensions.get(extension);
+       if (context) {
+
+--- a/toolkit/components/extensions/ExtensionProcessScript.jsm
++++ b/toolkit/components/extensions/ExtensionProcessScript.jsm
+@@ -415,3 +415,26 @@
+ };
+ 
+ ExtensionManager.init();
++
++// [OUT-OF-TREE] tartpvule Bug1424176
++(function OOT_Bug1424176() {
++  if (!isContentScriptProcess) {
++    return;
++  }
++
++  ExtensionProcessScript.OOT_Bug1424176 = new Map();
++
++  let observer = {
++    observe(subject, topic, data) {
++      if (topic !== "content-document-global-created") {
++        return;
++      }
++      for (const [extension, code] of ExtensionProcessScript.OOT_Bug1424176) {
++        let context = extension.getContext(subject);
++        let myLabel = `OOT_Bug1424176 ${extension.uuid}`;
++        Cu.evalInSandbox(code, context.sandbox, "latest", myLabel, 1);
++      }
++    }
++  };
++  Services.obs.addObserver(observer, "content-document-global-created");
++})();
