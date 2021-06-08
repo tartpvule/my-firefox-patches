@@ -5,32 +5,6 @@ For autoconfig scripts, need `general.config.sandbox_enabled` = `false`.
 
 Alternative way to patch: [chrome.manifest override](https://github.com/tartpvule/my-firefox-patches/issues/2#issue-481998289)
 
-## remove_normandy_esr68.patch
-
-A patch for ESR68 to remove the Normandy component.
-
-## Bug1421725_WebRequest_esr60.patch
-
-A patch for ESR60 to make WebRequest.jsm run and apply changes from blocking listeners sequentially.
-Non-blocking listeners are not affected.
-
-## monkey_Bug1421725_WebRequest_esr60.cfg
-
-An autoconfig script for ESR60 to monkey-patch Bug 1421725.
-
-## Bug1421725_WebRequest_esr68_with_308ef98e6e4b.patch
-
-A patch for ESR68.1 to make WebRequest.jsm run and apply changes from blocking listeners sequentially.
-This patch also refactors the code into a new class: `ListenerRunner`.
-Non-blocking listeners are not affected.
-
-This patch is intended to be applied after applying [this changeset](https://hg.mozilla.org/mozilla-central/rev/308ef98e6e4b),
-for [Bug 1450965](https://bugzilla.mozilla.org/show_bug.cgi?id=1450965).
-
-## monkey_Bug1421725_WebRequest_esr68.cfg
-
-An autoconfig script for ESR68 to monkey-patch Bug 1421725.
-
 ## ubo1250_issue909.patch
 
 A patch for gorhill's uBlock Origin 1.25.0 to fix Issue 909 "CNAME first-party resources detected as third-party".
@@ -49,4 +23,11 @@ Credit: [Rob Wu's comment in Bug 1486036](https://bugzilla.mozilla.org/show_bug.
 
 Will probably also "fix" Bugs [1486036](https://bugzilla.mozilla.org/show_bug.cgi?id=1486036) and [1415539](https://bugzilla.mozilla.org/show_bug.cgi?id=1415539), but I have not explicitly tested.
 
-A cleaner approach: define a new `run_at` manifest value, say "document_create", for content scripts to run at `content-document-global-created`.
+A cleaner approach would be to define a new `run_at` manifest value, say "document_create", for content scripts to run at `content-document-global-created`.
+
+## mod_ExportFunction_esr78.patch
+
+Adds an option, bool `OOT_notCtor`, for `exportFunction` not to pass `JSFUN_CONSTRUCTOR` to `NewFunctionByIdWithReserved`.
+This allows creating a function forwarder that throws `TypeError: ... is not a constructor`.
+
+See [CreepJS "lies.js"](https://github.com/abrahamjuliot/creepjs/blob/1554c66098cd814d7462b60981635339bf526e9e/modules/lies.js)

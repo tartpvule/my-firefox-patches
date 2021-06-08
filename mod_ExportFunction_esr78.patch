@@ -1,0 +1,92 @@
+See https://github.com/tartpvule/my-firefox-patches
+
+--- a/js/xpconnect/src/xpcprivate.h
++++ b/js/xpconnect/src/xpcprivate.h
+@@ -2355,23 +2355,29 @@
+                                  JSObject* options = nullptr)
+       : OptionsBase(cx, options),
+         defineAs(cx, JSID_VOID),
+-        allowCrossOriginArguments(false) {}
++        allowCrossOriginArguments(false),
++        OOT_notCtor(false) {}
+ 
+   virtual bool Parse() override {
+     return ParseId("defineAs", &defineAs) &&
+            ParseBoolean("allowCrossOriginArguments",
+-                        &allowCrossOriginArguments);
++                        &allowCrossOriginArguments) &&
++           ParseBoolean("OOT_notCtor",
++                        &OOT_notCtor);
+   }
+ 
+   JS::RootedId defineAs;
+   bool allowCrossOriginArguments;
++  bool OOT_notCtor;
+ };
+ 
+ class MOZ_STACK_CLASS FunctionForwarderOptions : public OptionsBase {
+  public:
+   explicit FunctionForwarderOptions(JSContext* cx = xpc_GetSafeJSContext(),
+                                     JSObject* options = nullptr)
+-      : OptionsBase(cx, options), allowCrossOriginArguments(false) {}
++      : OptionsBase(cx, options),
++        allowCrossOriginArguments(false),
++        OOT_notCtor(false) {}
+ 
+   JSObject* ToJSObject(JSContext* cx) {
+     JS::RootedObject obj(cx, JS_NewObjectWithGivenProto(cx, nullptr, nullptr));
+@@ -2386,15 +2392,24 @@
+       return nullptr;
+     }
+ 
++    JS::RootedValue OOT_val(cx);
++    OOT_val = JS::BooleanValue(OOT_notCtor);
++    if (!JS_DefineProperty(cx, obj, "OOT_notCtor", OOT_val, attrs)) {
++      return nullptr;
++    }
++
+     return obj;
+   }
+ 
+   virtual bool Parse() override {
+     return ParseBoolean("allowCrossOriginArguments",
+-                        &allowCrossOriginArguments);
++                        &allowCrossOriginArguments) &&
++           ParseBoolean("OOT_notCtor",
++                        &OOT_notCtor);
+   }
+ 
+   bool allowCrossOriginArguments;
++  bool OOT_notCtor;
+ };
+ 
+ class MOZ_STACK_CLASS StackScopedCloneOptions : public OptionsBase {
+
+--- a/js/xpconnect/src/ExportHelpers.cpp
++++ b/js/xpconnect/src/ExportHelpers.cpp
+@@ -408,11 +408,16 @@
+     }
+   }
+ 
++  unsigned flags = 0;
++  if (!options.OOT_notCtor) {
++    flags |= JSFUN_CONSTRUCTOR;
++  }
++
+   // We have no way of knowing whether the underlying function wants to be a
+   // constructor or not, so we just mark all forwarders as constructors, and
+   // let the underlying function throw for construct calls if it wants.
+   JSFunction* fun = js::NewFunctionByIdWithReserved(
+-      cx, FunctionForwarder, nargs, JSFUN_CONSTRUCTOR, id);
++      cx, FunctionForwarder, nargs, flags, id);
+   if (!fun) {
+     return false;
+   }
+@@ -515,6 +520,7 @@
+     FunctionForwarderOptions forwarderOptions;
+     forwarderOptions.allowCrossOriginArguments =
+         options.allowCrossOriginArguments;
++    forwarderOptions.OOT_notCtor = options.OOT_notCtor;
+     if (!NewFunctionForwarder(cx, id, funObj, forwarderOptions, rval)) {
+       JS_ReportErrorASCII(cx, "Exporting function failed");
+       return false;
